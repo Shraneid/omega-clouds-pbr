@@ -1,12 +1,11 @@
 const ABSORPTION_COEFFICIENT: f32 = 3.0;
-//const ABSORPTION_COEFFICIENT: f32 = 0.7;
-const ANISOTROPIC_COEFFICIENT: f32 = 0.9;
 const DENSITY_SCALE: f32 = 2.0;
 
-const AMBIENT_COLOR: vec3f = vec3(0.45, 0.5, 0.65);
+const AMBIENT_COLOR: vec3f = vec3(0.45, 0.5, 0.65) * 0.8;
 //const SUN_COLOR = vec3(255., 230., 210.) / 255.0;
 const SUN_COLOR = vec3(1.0, 0.9, 0.85);
 //const SUN_COLOR = vec3(1.0, 0., 0.);
+const SUN_INTENSITY = 7.0;
 
 const MARCH_MAX_STEPS: i32 = 40;
 const MARCH_DISTANCE = 0.16 * 40;
@@ -145,9 +144,8 @@ fn sampleDepth(p: vec3f) -> f32 {
     return pow(max(scene(p), 0.0), 2.0) * DENSITY_SCALE;
 }
 
-fn henyeyGreenstein(mu: f32) -> f32 {
-    let g = ANISOTROPIC_COEFFICIENT;
-    let gg = g*g;
+fn henyeyGreenstein(mu: f32, g: f32) -> f32 {
+    let gg = g * g;
     return (1.0 / (4.0 * 3.14159265)) * ((1.0 - gg) / pow(1.0 + gg - 2.0 * g * mu, 1.5));
 }
 
@@ -175,17 +173,19 @@ fn rayMarch(rayOrigin: vec3f, rayDirection: vec3f, sunDirection: vec3f) -> vec4f
     var transmittance = 1.0;
     var luminance = vec3(0.0);
 
+    let mu = dot(rayDirection, sunDirection);
+    let phase = mix(henyeyGreenstein(mu, -0.3), henyeyGreenstein(mu, 0.35), 0.7) * SUN_INTENSITY;
+
     for (var i = 0; i < MARCH_MAX_STEPS; i++) {
         let density = sampleDepth(currentPosition);
 
         if (density > 0.0) {
             let sunTransmittance = lightRayMarch(currentPosition, sunDirection);
-            let phase = 1.; // TODO: make real phase calculations
-            let lightColor = max(0.15, sunTransmittance) * phase * SUN_COLOR;
+            let lightColor = clamp(sunTransmittance, 0.15, 0.6) * phase * SUN_COLOR;
 
             let stepTransmittance = beersLaw(MARCH_SIZE, density * ABSORPTION_COEFFICIENT);
 
-            luminance += transmittance * (1.0 - stepTransmittance) * (lightColor + AMBIENT_COLOR * .5);
+            luminance += transmittance * (1.0 - stepTransmittance) * (lightColor + AMBIENT_COLOR);
             transmittance *= stepTransmittance;
         }
 
