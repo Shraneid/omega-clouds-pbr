@@ -1,5 +1,21 @@
-const ABSORPTION_COEFFICIENT: f32 = 0.7;
+const ABSORPTION_COEFFICIENT: f32 = 3.0;
+//const ABSORPTION_COEFFICIENT: f32 = 0.7;
 const ANISOTROPIC_COEFFICIENT: f32 = 0.9;
+const DENSITY_SCALE: f32 = 2.0;
+
+const AMBIENT_COLOR: vec3f = vec3(0.45, 0.5, 0.65);
+//const SUN_COLOR = vec3(255., 230., 210.) / 255.0;
+const SUN_COLOR = vec3(1.0, 0.9, 0.85);
+//const SUN_COLOR = vec3(1.0, 0., 0.);
+
+const MARCH_MAX_STEPS: i32 = 40;
+const MARCH_DISTANCE = 0.16 * 40;
+const MARCH_SIZE = MARCH_DISTANCE / f32(MARCH_MAX_STEPS);
+
+const LIGHT_MAX_STEPS: i32 = 60;
+const LIGHT_RAYMARCH_DISTANCE = 2.0;
+const LIGHT_MARCH_SIZE = LIGHT_RAYMARCH_DISTANCE / f32(LIGHT_MAX_STEPS);
+
 const ANIMATED: f32 = 1.0f; // TRUE
 //const ANIMATED: f32 = 0.0f; // FALSE
 
@@ -20,24 +36,6 @@ struct VertexOut {
     @builtin(position) pos: vec4f,
     @location(0) uv: vec2f,
 };
-
-fn rotateXY(p: vec3f, a: f32) -> vec3f {
-    let c = cos(a);
-    let s = sin(a);
-    return vec3f(c * p.x - s * p.y, s * p.x + c * p.y, p.z);
-}
-
-fn rotateYZ(p: vec3f, a: f32) -> vec3f {
-    let c = cos(a);
-    let s = sin(a);
-    return vec3f(p.x, c * p.y - s * p.z, s * p.y + c * p.z);
-}
-
-fn rotateXZ(p: vec3f, a: f32) -> vec3f {
-    let c = cos(a);
-    let s = sin(a);
-    return vec3f(c * p.x - s * p.z, p.y, s * p.x + c * p.z);
-}
 
 fn noise(x: vec3f) -> f32 {
     const offset = vec2(37.0, 239.0);
@@ -134,16 +132,17 @@ fn sdCapsule(p: vec3f, a: vec3f, b: vec3f, r: f32) -> f32 {
 //}
 
 fn scene(p: vec3f) -> f32 {
-    let sphere = vec4f(0.0, 0.0, 0.0, 1.0);
+    let sphere = vec4f(0.0, 0.0, 0.0, 1.4);
     let sphereDistance = sdSphere(p, sphere.xyz, sphere.w);
+    let shape = min(-sphereDistance, 0.4);
 
     let f = fbm(p);
 
-    return - sphereDistance + f;
+    return shape + f;
 }
 
 fn sampleDepth(p: vec3f) -> f32 {
-    return max(scene(p), 0.0);
+    return pow(max(scene(p), 0.0), 2.0) * DENSITY_SCALE;
 }
 
 fn henyeyGreenstein(mu: f32) -> f32 {
@@ -157,59 +156,49 @@ fn beersLaw(dist: f32, absorption: f32) -> f32 {
 }
 
 fn lightRayMarch(rayOrigin: vec3f, sunDirection: vec3f) -> f32 {
-    const LIGHT_MAX_STEPS: i32 = 6;
-    const LIGHT_MARCH_SIZE = 0.03;
-
     var position = rayOrigin;
-    var totalDensity = 0.0;
+    var sunTransmittance = 1.0;
 
     for (var step = 0; step < LIGHT_MAX_STEPS; step++) {
-        position += sunDirection * LIGHT_MARCH_SIZE * f32(step);
+        position += sunDirection * LIGHT_MARCH_SIZE;
 
-        let lightSample = sampleDepth(position);
-        totalDensity += lightSample;
+        let density = max(sampleDepth(position), 0.0);
+
+        sunTransmittance *= beersLaw(LIGHT_MARCH_SIZE, density * ABSORPTION_COEFFICIENT);
     }
 
-    let transmittance = beersLaw(totalDensity, ABSORPTION_COEFFICIENT);
-    return transmittance;
+    return sunTransmittance;
 }
 
 fn rayMarch(rayOrigin: vec3f, rayDirection: vec3f, sunDirection: vec3f) -> vec4f {
-    const MARCH_SIZE: f32 = 0.16f;
-    const MAX_STEPS: i32 = 40;
-
     var currentPosition = rayOrigin;
     var transmittance = 1.0;
     var luminance = vec3(0.0);
 
-    for (var i = 0; i < MAX_STEPS; i++) {
+    for (var i = 0; i < MARCH_MAX_STEPS; i++) {
         let density = sampleDepth(currentPosition);
 
         if (density > 0.0) {
-            let phase = 1.0; // TODO: change later
-            // TODO: LIGHT MARCH
+            let sunTransmittance = lightRayMarch(currentPosition, sunDirection);
+            let phase = 1.; // TODO: make real phase calculations
+            let lightColor = max(0.15, sunTransmittance) * phase * SUN_COLOR;
 
-            let stepTransmittance = beersLaw(MARCH_SIZE, ABSORPTION_COEFFICIENT);
+            let stepTransmittance = beersLaw(MARCH_SIZE, density * ABSORPTION_COEFFICIENT);
 
-            luminance += vec3(1.0 - transmittance);
+            luminance += transmittance * (1.0 - stepTransmittance) * (lightColor + AMBIENT_COLOR * .5);
             transmittance *= stepTransmittance;
         }
 
-        currentPosition += MARCH_SIZE * normalize(rayDirection);
+        currentPosition += MARCH_SIZE * rayDirection;
     }
 
     return vec4(luminance, transmittance);
 }
 
-fn applyCameraRotation(p: vec3f) -> vec3f {
-    let angle = uniforms.elapsedTime * 0.000;
-    let p2 = rotateXZ(p, angle);
-    return p2;
-}
 
 @fragment
 fn fs(in: VertexOut) -> @location(0) vec4f {
-    var sunPosition: vec3f = vec3(2.0, 1.5, -2.5);
+    var sunPosition: vec3f = vec3(2.0 * sin(uniforms.elapsedTime / 1000.0 / 2.0), 1.5, -2.5);
     var sunDirection: vec3f = normalize(sunPosition);
 
     var uv = vec2f(in.uv);
@@ -226,14 +215,13 @@ fn fs(in: VertexOut) -> @location(0) vec4f {
     var offset = fract(textureSampleLevel(blueNoiseTexture, texSampler, in.pos.xy / 1024.0, 0.0).r);
     offset = fract(offset + f32(u32(uniforms.frameCount) % 32u) * 1.618);
 
-    let cloudColorAndTransmittance = rayMarch(camera + rayDirection * offset, rayDirection, sunDirection);
+    let cloudColorAndTransmittance = rayMarch(camera + rayDirection * offset * MARCH_SIZE, rayDirection, sunDirection);
 
     let luminance = cloudColorAndTransmittance.rgb;
     let transmittance = cloudColorAndTransmittance.a;
 
     let sunAlbedo = max(vec3(pow(dot(sunDirection, rayDirection), 30.0)), vec3(0,0,0));
-    let sunColor = vec3(255., 200., 120.) / 255.0;
-//    let sunColor = vec3(1.0, 0.6, 0.3);
+
     var skyColor = vec3(0.7, 0.7, 0.9);
     skyColor -= 0.5 * vec3(0.9, 0.75, 0.9) * centeredUV.y;
 
@@ -241,6 +229,6 @@ fn fs(in: VertexOut) -> @location(0) vec4f {
 
     skyColor += sunAlbedo;
 
-    let color = skyColor * transmittance + sunColor * luminance;
+    let color = skyColor * transmittance + luminance;
     return vec4(color.rgb, 1.0);
 }
