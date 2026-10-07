@@ -1,10 +1,5 @@
 const ABSORPTION_COEFFICIENT: f32 = 0.7;
 const ANISOTROPIC_COEFFICIENT: f32 = 0.9;
-const MAX_STEPS: i32 = 40;
-const LIGHT_MAX_STEPS: i32 = 6;
-const MAX_DISTANCE: f32 = 100.0f;
-const EPSILON: f32 = 0.01f;
-const MARCH_SIZE: f32 = 0.16f;
 const ANIMATED: f32 = 1.0f; // TRUE
 //const ANIMATED: f32 = 0.0f; // FALSE
 
@@ -162,12 +157,14 @@ fn beersLaw(dist: f32, absorption: f32) -> f32 {
 }
 
 fn lightRayMarch(rayOrigin: vec3f, sunDirection: vec3f) -> f32 {
+    const LIGHT_MAX_STEPS: i32 = 6;
+    const LIGHT_MARCH_SIZE = 0.03;
+
     var position = rayOrigin;
     var totalDensity = 0.0;
-    var lightMarchSize = 0.03;
 
     for (var step = 0; step < LIGHT_MAX_STEPS; step++) {
-        position += sunDirection * lightMarchSize * f32(step);
+        position += sunDirection * LIGHT_MARCH_SIZE * f32(step);
 
         let lightSample = sampleDepth(position);
         totalDensity += lightSample;
@@ -178,18 +175,28 @@ fn lightRayMarch(rayOrigin: vec3f, sunDirection: vec3f) -> f32 {
 }
 
 fn rayMarch(rayOrigin: vec3f, rayDirection: vec3f, sunDirection: vec3f) -> vec4f {
+    const MARCH_SIZE: f32 = 0.16f;
+    const MAX_STEPS: i32 = 40;
+
     var currentPosition = rayOrigin;
     var transmittance = 1.0;
     var luminance = vec3(0.0);
 
-//    for (var i = 0; i < MAX_STEPS; i++) {
-//        let density = sampleDepth(currentPosition);
-//
-//        if (density > 0.0) {
-//        }
-//
-//        currentPosition = currentPosition + MARCH_SIZE * normalize(rayDirection);
-//    }
+    for (var i = 0; i < MAX_STEPS; i++) {
+        let density = sampleDepth(currentPosition);
+
+        if (density > 0.0) {
+            let phase = 1.0; // TODO: change later
+            // TODO: LIGHT MARCH
+
+            let stepTransmittance = beersLaw(MARCH_SIZE, ABSORPTION_COEFFICIENT);
+
+            luminance += vec3(1.0 - transmittance);
+            transmittance *= stepTransmittance;
+        }
+
+        currentPosition += MARCH_SIZE * normalize(rayDirection);
+    }
 
     return vec4(luminance, transmittance);
 }
@@ -217,16 +224,16 @@ fn fs(in: VertexOut) -> @location(0) vec4f {
     let rayDirection = normalize(forward + (right * centeredUV.x + up * centeredUV.y) * fov);
 
     var offset = fract(textureSampleLevel(blueNoiseTexture, texSampler, in.pos.xy / 1024.0, 0.0).r);
-    offset = fract(offset + f32(u32(uniforms.frameCount) % 32u) / sqrt(0.5) * MARCH_SIZE);
+    offset = fract(offset + f32(u32(uniforms.frameCount) % 32u) * 1.618);
 
-    let cloudColorAndTransmittance = rayMarch(camera, rayDirection, sunDirection);
-//    let cloudColorAndTransmittance = rayMarch(camera + rayDirection * offset, rayDirection, sunDirection);
+    let cloudColorAndTransmittance = rayMarch(camera + rayDirection * offset, rayDirection, sunDirection);
 
     let luminance = cloudColorAndTransmittance.rgb;
     let transmittance = cloudColorAndTransmittance.a;
 
     let sunAlbedo = max(vec3(pow(dot(sunDirection, rayDirection), 30.0)), vec3(0,0,0));
-    let sunColor = vec3(1.0, 0.6, 0.3);
+    let sunColor = vec3(255., 200., 120.) / 255.0;
+//    let sunColor = vec3(1.0, 0.6, 0.3);
     var skyColor = vec3(0.7, 0.7, 0.9);
     skyColor -= 0.5 * vec3(0.9, 0.75, 0.9) * centeredUV.y;
 
